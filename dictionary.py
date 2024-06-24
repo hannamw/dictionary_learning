@@ -77,23 +77,11 @@ class AutoEncoder(Dictionary, nn.Module):
             else:
                 return x_hat, x_ghost
             
-    def from_pretrained(path, device=None):
-        """
-        Load a pretrained autoencoder from a file.
-        """
-        state_dict = t.load(path)
-        dict_size, activation_dim = state_dict['encoder.weight'].shape
-        autoencoder = AutoEncoder(activation_dim, dict_size)
-        autoencoder.load_state_dict(state_dict)
-        if device is not None:
-            autoencoder.to(device)
-        return autoencoder
-            
 class IdentityDict(Dictionary, nn.Module):
     """
     An identity dictionary, i.e. the identity function.
     """
-    def __init__(self, activation_dim=None):
+    def __init__(self, activation_dim):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = activation_dim
@@ -109,3 +97,87 @@ class IdentityDict(Dictionary, nn.Module):
             return x, x
         else:
             return x
+        
+
+class GatedAutoEncoder(Dictionary, nn.Module):
+    """
+    An autoencoder with separate gating and magnitude networks.
+    """
+    def __init__(self, activation_dim, dict_size, initialization='default', device=None):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.decoder_bias = nn.Parameter(t.empty(activation_dim, device=device))
+        self.encoder = nn.Linear(activation_dim, dict_size, bias=False, device=device)
+        self.r_mag = nn.Parameter(t.empty(dict_size, device=device))
+        self.gate_bias = nn.Parameter(t.empty(dict_size, device=device))
+        self.mag_bias = nn.Parameter(t.empty(dict_size, device=device))
+        self.decoder = nn.Linear(dict_size, activation_dim, bias=False, device=device)
+        if initialization == 'default':
+            self._reset_parameters()
+        else:
+            initialization(self)
+        self.half()
+
+    def _reset_parameters(self):
+        """
+        Default method for initializing GatedSAE weights.
+        """
+        # biases are initialized to zero
+        t.nn.init.zeros_(self.decoder_bias)
+        t.nn.init.zeros_(self.r_mag)
+        t.nn.init.zeros_(self.gate_bias)
+        t.nn.init.zeros_(self.mag_bias)
+
+        # decoder weights are initialized to random unit vectors
+        dec_weight = t.randn_like(self.decoder.weight)
+        dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
+        self.decoder.weight = nn.Parameter(dec_weight)
+
+    def encode(self, x, return_gate=False):
+        """
+        Returns features, gate value (pre-Heavyside)
+        """
+        x_enc = self.encoder(x - self.decoder_bias)
+
+        # gating network
+        pi_gate = x_enc + self.gate_bias
+        f_gate = (pi_gate > 0).half()
+
+        # magnitude network
+        pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
+        f_mag = nn.ReLU()(pi_mag)
+
+        f = f_gate * f_mag
+        
+        if return_gate:
+            return f, nn.ReLU()(pi_gate)
+
+        return f
+
+    def decode(self, f):
+        return self.decoder(f) + self.decoder_bias
+    
+    def forward(self, x, output_features=False):
+        f = self.encode(x)
+        x_hat = self.decode(f)
+
+        # TODO: modify so that x_hat depends on f
+        f = f * self.decoder.weight.norm(dim=0, keepdim=True)
+
+        if output_features:
+            return x_hat, f
+        else:
+            return x_hat
+
+    def from_pretrained(path, device=None):
+        """
+        Load a pretrained autoencoder from a file.
+        """
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        autoencoder = GatedAutoEncoder(activation_dim, dict_size)
+        autoencoder.load_state_dict(state_dict)
+        if device is not None:
+            autoencoder.to(device)
+        return autoencoder
