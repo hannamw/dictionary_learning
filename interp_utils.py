@@ -265,7 +265,7 @@ def convert_token_array_to_list(array):
             array = [array]
     return array
 
-def tokens_and_activations_to_html(toks, activations, tokenizer, logit_diffs=None, model_type="causal"):
+def tokens_and_activations_to_html(toks, activations, tokenizer, logit_diffs=None, model_type="causal", max_value=None):
     # text_spacing = "0.07em"
     text_spacing = "0.00em"
     toks = convert_token_array_to_list(toks)
@@ -278,7 +278,10 @@ def tokens_and_activations_to_html(toks, activations, tokenizer, logit_diffs=Non
     highlighted_text.append("""
 <body style="background-color: black; color: white;">
 """)
-    max_value = max([max(activ) for activ in activations])
+    if max_value is None:
+        max_value = max([max(activ) for activ in activations])
+    else:
+        max_value = max_value
     min_value = min([min(activ) for activ in activations])
     if(logit_diffs is not None and model_type != "reward_model"):
         logit_max_value = max([max(activ) for activ in logit_diffs])
